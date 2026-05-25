@@ -12,7 +12,8 @@ find_package(PNG REQUIRED)
 add_executable(frame_generator  src/main.cpp
                                 src/sequential/processing.cpp
                                 src/parallel/processing.cu
-                                src/utils/png_loader.cpp)
+                                src/utils/png_loader.cpp
+                                src/utils/utils.cpp)
 
 target_include_directories(frame_generator PRIVATE include)
 

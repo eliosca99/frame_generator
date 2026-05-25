@@ -2,11 +2,16 @@
 #include <iostream>
 #include <png.h>
 
+// implementazione delle funzioni di utilità
+
 namespace framegen::utils {
 
 namespace fs = std::filesystem;
 
 std::optional<Frame> load_png(const fs::path& path) {
+    // per caricare un frame da un file PNG, viene utilizzata la libreria libpng. 
+    // la funzione restituisce un oggetto Frame se il caricamento è riuscito, altrimenti restituisce std::nullopt.
+    
     if(!fs::exists(path)) {
         std::cerr << "File non trovato" << path << std::endl;
         return std::nullopt;
@@ -76,6 +81,26 @@ std::optional<Frame> load_png(const fs::path& path) {
     fclose(fp);
 
     return frame;
+}
+
+std::optional<FrameSequence> load_png_sequence(const fs::path& dir) {
+    if(!fs::exists(dir) || !fs::is_directory(dir)) {
+        std::cerr << "Directory non trovata" << dir << std::endl;
+        return std::nullopt;
+    }
+
+    FrameSequence sequence;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".png") {
+            if (auto frame = load_png(entry.path())) {
+                sequence.push_back(frame.value());
+            } else {
+                std::cerr << "Impossibile caricare il file" << entry.path() << std::endl;
+            }
+        }
+    }
+
+    return sequence;
 }
 
 }//namespace framegen::utils
