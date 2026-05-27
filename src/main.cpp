@@ -1,7 +1,7 @@
 #include <iostream>
 #include <filesystem>
 
-#include "../include/utils/png_loader.hpp"
+#include "../include/utils/png_utils.hpp"
 #include "../include/sequential/processing.hpp"
 #include <optional>
 
@@ -22,11 +22,14 @@ int main() {
         // loaded_frame_1 and loaded_frame_2 are optionals; push the contained Frame
         seq.push_back(*loaded_frame_1);
         seq.push_back(*loaded_frame_2);
-        int nFrames = 1;
+        int nFrames = 10;
         framegen::processing::lerp_sequential(seq, nFrames, output);
-        framegen::Frame frame_output = output[0];
-        int prova = frame_output.data.size();
-        std::cout << prova << std::endl;
+        fs::path output_path = "../output/";
+        if (framegen::utils::save_png_sequence(output, output_path)) {
+            std::cout << "Frame salvato correttamente in " << output_path << std::endl;
+        } else {
+            std::cerr << "Impossibile salvare il frame in " << output_path << std::endl;
+        }
     } else {
         std::cerr << "Frames non caricati" << std::endl;
         return -1;

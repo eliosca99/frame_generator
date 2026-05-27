@@ -1,7 +1,7 @@
 #ifndef PROCESSING_HPP
 #define PROCESSING_HPP
 
-#include "../utils/png_loader.hpp"
+#include "../utils/png_utils.hpp"
 #include "../frame.hpp"
 
 namespace framegen::processing {
