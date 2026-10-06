@@ -66,18 +66,37 @@ std::optional<Frame> load_png(const fs::path& path) {
     if (png_get_valid(png, info, PNG_INFO_tRNS))
         png_set_tRNS_to_alpha(png);
 
+    if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+        png_set_gray_to_rgb(png);
+
+    bool has_alpha = (color_type & PNG_COLOR_MASK_ALPHA) || png_get_valid(png, info, PNG_INFO_tRNS);
+    if (!has_alpha)
+        png_set_add_alpha(png, 0xFF, PNG_FILLER_AFTER);
+
     png_read_update_info(png, info);
-    frame.format = static_cast<PixelFormat>(png_get_channels(png, info));
 
     size_t row_bytes = png_get_rowbytes(png, info);
-    frame.data.resize(frame.height * row_bytes);
+    std::vector<uint8_t> raw(static_cast<size_t>(frame.height) * row_bytes);
 
     std::vector<png_bytep> row_pointers(frame.height);
     for (uint32_t y = 0; y < frame.height; ++y) {
-        row_pointers[y] = frame.data.data() + (y * row_bytes);
+        row_pointers[y] = raw.data() + (static_cast<size_t>(y) * row_bytes);
     }
 
     png_read_image(png, row_pointers.data());
+
+    frame.data.resize(static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height));
+    for (int y = 0; y < frame.height; ++y) {
+        for (int x = 0; x < frame.width; ++x) {
+            size_t base = static_cast<size_t>(y) * row_bytes + static_cast<size_t>(x) * 4;
+            Pixel p;
+            p.r = raw[base];
+            p.g = raw[base + 1];
+            p.b = raw[base + 2];
+            p.a = raw[base + 3];
+            frame.data[static_cast<size_t>(y) * static_cast<size_t>(frame.width) + static_cast<size_t>(x)] = p;
+        }
+    }
 
     png_destroy_read_struct(&png, &info, nullptr);
     fclose(fp);
@@ -106,7 +125,7 @@ std::optional<FrameSequence> load_png_sequence(const fs::path& dir) {
 }
 
 bool save_png(const Frame& frame, const fs::path& path) {
-    if (frame.width <= 0 || frame.height <= 0 || frame.data.empty()) {
+    if (frame.width <= 0 || frame.height <= 0) {
         std::cerr << "Frame non valido" << std::endl;
         return false;
     }
@@ -149,35 +168,29 @@ bool save_png(const Frame& frame, const fs::path& path) {
         return false;
     }
 
-    int color_type = PNG_COLOR_TYPE_RGB;
-    int channels = 3;
-    switch (frame.format) {
-        case PixelFormat::GRAY:
-            color_type = PNG_COLOR_TYPE_GRAY;
-            channels = 1;
-            break;
-        case PixelFormat::RGB:
-            color_type = PNG_COLOR_TYPE_RGB;
-            channels = 3;
-            break;
-        case PixelFormat::RGBA:
-            color_type = PNG_COLOR_TYPE_RGBA;
-            channels = 4;
-            break;
-        default:
-            std::cerr << "Formato pixel non supportato" << std::endl;
-            png_destroy_write_struct(&png, &info);
-            fclose(fp);
-            return false;
-    }
+    int color_type = PNG_COLOR_TYPE_RGBA;
+    int channels = 4;
 
-    size_t row_bytes = static_cast<size_t>(frame.width) * static_cast<size_t>(channels);
-    size_t expected_size = row_bytes * static_cast<size_t>(frame.height);
-    if (frame.data.size() < expected_size) {
+    size_t expected_pixels = static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height);
+    if (frame.data.size() < expected_pixels) {
         std::cerr << "Dimensione dati non valida" << std::endl;
         png_destroy_write_struct(&png, &info);
         fclose(fp);
         return false;
+    }
+
+    size_t row_bytes = static_cast<size_t>(frame.width) * static_cast<size_t>(channels);
+    std::vector<uint8_t> raw(expected_pixels * static_cast<size_t>(channels));
+    for (int y = 0; y < frame.height; ++y) {
+        for (int x = 0; x < frame.width; ++x) {
+            size_t idx = static_cast<size_t>(y) * static_cast<size_t>(frame.width) + static_cast<size_t>(x);
+            size_t base = static_cast<size_t>(y) * row_bytes + static_cast<size_t>(x) * static_cast<size_t>(channels);
+            const Pixel& p = frame.data[idx];
+            raw[base] = p.r;
+            raw[base + 1] = p.g;
+            raw[base + 2] = p.b;
+            raw[base + 3] = p.a;
+        }
     }
 
     png_init_io(png, fp);
@@ -196,9 +209,7 @@ bool save_png(const Frame& frame, const fs::path& path) {
 
     std::vector<png_bytep> row_pointers(static_cast<size_t>(frame.height));
     for (int y = 0; y < frame.height; ++y) {
-        row_pointers[static_cast<size_t>(y)] = const_cast<png_bytep>(
-            frame.data.data() + (static_cast<size_t>(y) * row_bytes)
-        );
+        row_pointers[static_cast<size_t>(y)] = raw.data() + (static_cast<size_t>(y) * row_bytes);
     }
 
     png_write_image(png, row_pointers.data());

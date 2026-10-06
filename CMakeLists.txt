@@ -10,7 +10,7 @@ find_package(PNG REQUIRED)
 
 set(SOURCES
     src/main.cpp
-    src/sequential/processing.cpp
+    src/sequential/interpolation.cpp
     src/utils/png_utils.cpp
     src/utils/utils.cpp
 )
@@ -21,7 +21,7 @@ if(USE_CUDA)
         enable_language(CUDA)
         set(CMAKE_CUDA_STANDARD 17)
         set(CMAKE_CUDA_STANDARD_REQUIRED True)
-        list(APPEND SOURCES src/parallel/processing.cu)
+        list(APPEND SOURCES src/parallel/interpolation.cu)
     else()
         message(WARNING "CUDAToolkit not found; building without CUDA support.")
         set(USE_CUDA OFF)

@@ -2,7 +2,7 @@
 #include <filesystem>
 
 #include "../include/utils/png_utils.hpp"
-#include "../include/sequential/processing.hpp"
+#include "../include/sequential/interpolation.hpp"
 #include <optional>
 
 int main() {
@@ -23,7 +23,7 @@ int main() {
         seq.push_back(*loaded_frame_1);
         seq.push_back(*loaded_frame_2);
         int nFrames = 10;
-        framegen::processing::lerp_sequential(seq, nFrames, output);
+        framegen::interpolation::lerp_sequential(seq, nFrames, output);
         fs::path output_path = "../output/";
         if (framegen::utils::save_png_sequence(output, output_path)) {
             std::cout << "Frame salvato correttamente in " << output_path << std::endl;
