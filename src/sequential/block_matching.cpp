@@ -18,10 +18,6 @@ std::optional<std::vector<int2>> block_matching(const Frame& frame1, const Frame
         return std::nullopt;
     }
 
-    // il block matching suddivide il frame1 in blocchi, poi scorre il blocco all'interno della finestra nel frame2
-    // e confronta i pixel. in base alla corrispondenza migliore (seguendo una metrica) definisce il vettore
-    // di movimento di quel blocco
-
     // calcolo la dimensione della griglia
     int grid_height = (frame1.height + block_size - 1) / block_size;
     int grid_width = (frame1.width + block_size -1) / block_size;
@@ -35,23 +31,45 @@ std::optional<std::vector<int2>> block_matching(const Frame& frame1, const Frame
     for (int grid_r = 0; grid_r < grid_height; grid_r++) {
         for (int grid_c = 0; grid_c < grid_width; grid_c++) {
             int best_sad = INT32_MAX;
-            int2 best_vector;
+            int2 best_vector = {0, 0};
             // sono in un blocco. ciclo per ogni elemento della finestra
-            for (int dx = -search_window_size; dx < search_window_size; dx++) {
-                for (int dy = -search_window_size; dy < search_window_size; dy++) {
+            // calcolo gli spostamenti minimi e massimi (per gestire i bordi)
+            int dxMin = std::max(-search_window_size, -block_size * grid_c);
+            int dxMax = std::min(search_window_size, frame2.width - (block_size * (grid_c+1)));
+            int dyMin = std::max(-search_window_size, -block_size * grid_r);
+            int dyMax = std::min(search_window_size, frame2.height - (block_size * (grid_r+1)));
+            for (int dy = dyMin; dy <= dyMax; dy++) {
+                for (int dx = dxMin; dx <= dxMax; dx++) {
                     int cur_sad = 0;
                     // ora devo confrontare ogni pixel nel blocco nel frame1 con il corrispondente pixel nel frame2
-                    for (int i = 0; i < frame1.height; i++) {
-                        for (int j = 0; j < frame1.width; j++) {
-                            
-                        }
-                    }
+                    for (int i = 0; i < block_size; i++) {
+                        const Pixel* rowA = frame1.data.data()
+                            + (grid_r * block_size + i) * frame1.width
+                            + grid_c * block_size;
 
+                        const Pixel* rowB = frame2.data.data()
+                            + (grid_r * block_size + dy + i) * frame2.width
+                            + (grid_c * block_size + dx);
+
+                        for (int j = 0; j < block_size; j++) {
+                            cur_sad += std::abs(rowA[j].r - rowB[j].r)
+                                    + std::abs(rowA[j].g - rowB[j].g)
+                                    + std::abs(rowA[j].b - rowB[j].b);
+                        }
+
+                        // early termination
+                        if (cur_sad >= best_sad) break;
+                    }   
+
+                    if (cur_sad < best_sad) {
+                        best_sad = cur_sad;
+                        best_vector = {dx, dy};
+                    }
                 }
             }
+            mv_matrix[grid_r * grid_width + grid_c] = best_vector;
         }
     }
 }
-
 
 }// namespace framegen::block_matching
