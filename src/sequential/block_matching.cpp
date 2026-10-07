@@ -30,6 +30,7 @@ std::optional<std::vector<int2>> block_matching(const Frame& frame1, const Frame
     // ciclo sui blocchi della griglia
     for (int grid_r = 0; grid_r < grid_height; grid_r++) {
         for (int grid_c = 0; grid_c < grid_width; grid_c++) {
+            std::cout << grid_r << " " << grid_c << "\n" << std::endl;
             int best_sad = INT32_MAX;
             int2 best_vector = {0, 0};
             // sono in un blocco. ciclo per ogni elemento della finestra

@@ -11,6 +11,7 @@ find_package(PNG REQUIRED)
 set(SOURCES
     src/main.cpp
     src/sequential/interpolation.cpp
+    src/sequential/block_matching.cpp
     src/utils/png_utils.cpp
     src/utils/utils.cpp
 )

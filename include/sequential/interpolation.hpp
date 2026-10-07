@@ -8,7 +8,6 @@ namespace framegen::interpolation {
 
     void lerp_sequential(const FrameSequence& input, int nFrames, FrameSequence& output);
     void bicubic_sequential(const FrameSequence& input, int nFrames, FrameSequence& output);
-    void block_matching_sequential(const FrameSequence& input, int nFrames, FrameSequence& output);
 
 }// framegen::interpolation
 
