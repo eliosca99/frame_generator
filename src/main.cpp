@@ -1,40 +1,45 @@
 #include <iostream>
 #include <filesystem>
+#include <array>
 
 #include "../include/utils/png_utils.hpp"
 #include "../include/sequential/interpolation.hpp"
-#include "../include/sequential/block_matching.hpp"
 #include <optional>
 
 int main() {
     namespace fs = std::filesystem;
-    fs::path base_dir = "../input";
-    fs::path file_name_1 = "bianca.png";
-    fs::path file_name_2 = "nera.png";
-    fs::path path_1 = base_dir / file_name_1;
-    fs::path path_2 = base_dir / file_name_2;
-    const std::optional<framegen::Frame> loaded_frame_1 = framegen::utils::load_png(path_1);
-    const std::optional<framegen::Frame> loaded_frame_2 = framegen::utils::load_png(path_2);
-    if (loaded_frame_1 && loaded_frame_2) {
-        std::cout << "Frames caricati correttamente" << std::endl;
+    const fs::path base_dir = fs::exists("input") ? "input" : "../input";
+    const std::array<const char*, 4> file_names = {
+        "bianca.png", "bianca_2.png", "nera.png", "nera_2.png"
+    };
 
-        framegen::FrameSequence seq;
-        framegen::FrameSequence output;
-        // loaded_frame_1 and loaded_frame_2 are optionals; push the contained Frame
-        seq.push_back(*loaded_frame_1);
-        seq.push_back(*loaded_frame_2);
-        int nFrames = 2;
-        framegen::interpolation::lerp_sequential(seq, nFrames, output);
-        framegen::block_matching::block_matching(*loaded_frame_1, *loaded_frame_2, 50, 20);
-
-        fs::path output_path = "../output/test/";
-        if (framegen::utils::save_png_sequence(output, output_path)) {
-            std::cout << "Frames salvato correttamente in " << output_path << std::endl;
-        } else {
-            std::cerr << "Impossibile salvare i frames in " << output_path << std::endl;
+    framegen::FrameSequence input;
+    for (const char* file_name : file_names) {
+        const std::optional<framegen::Frame> frame =
+            framegen::utils::load_png(base_dir / file_name);
+        if (!frame) {
+            std::cerr << "Impossibile caricare il frame " << file_name << std::endl;
+            return -1;
         }
+        input.push_back(*frame);
+    }
+
+    std::cout << "Quattro frame caricati correttamente" << std::endl;
+
+    framegen::FrameSequence output;
+    constexpr int nFrames = 1;
+    constexpr int blockSize = 50;
+    constexpr int searchWindowSize = 20;
+    framegen::interpolation::bicubic_sequential(
+        input, nFrames, blockSize, searchWindowSize, output);
+
+    const fs::path output_path =
+        fs::exists("output") ? "output/bicubic_sequential" : "../output/bicubic_sequential";
+    if (framegen::utils::save_png_sequence(output, output_path)) {
+        std::cout << "Frame bicubici salvati correttamente in "
+                  << output_path << std::endl;
     } else {
-        std::cerr << "Frames non caricati" << std::endl;
+        std::cerr << "Impossibile salvare i frame in " << output_path << std::endl;
         return -1;
     }
 

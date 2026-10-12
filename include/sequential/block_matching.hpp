@@ -17,7 +17,7 @@ namespace framegen::block_matching {
         v.x = x;
         v.y = y;
         return v;
-    };
+    }
 
     std::optional<std::vector<int2>> block_matching(const Frame& frame1, const Frame& frame2, int block_size, int search_window_size);
 

@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cp input/bianca\\.png input/bianca_2\\.png && cp input/nera\\.png input/nera_2\\.png && file input/bianca_2\\.png input/nera_2\\.png && git status --short$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
