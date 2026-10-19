@@ -9,9 +9,9 @@ namespace framegen::interpolation {
         float r, g, b, a;
     };
 
-    inline void spatialWeights(float off, int& i, float w[4]);
-    inline int clampi(int v, int lo, int hi);
-    inline Color sample(const Pixel* frame, int width, int height, int x, int y,
+    void spatialWeights(float off, int& i, float w[4]);
+    int clampi(int v, int lo, int hi);
+    Color sample(const Pixel* frame, int width, int height, int x, int y,
                  const float wx[4], const float wy[4]);
 
     void lerp_sequential(const FrameSequence& input, int nFrames, FrameSequence& output);

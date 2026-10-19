@@ -109,7 +109,7 @@ namespace framegen::interpolation {
 
         // applico il block matching da F1 a F0, da F1 a F2, da F1 a F3, che restituisce
         // le matrici di movimento dal Frame F1 agli altri, d0, d2, d3.
-        using framegen::block_matching::int2;
+        using framegen::utils::int2;
         using framegen::block_matching::block_matching;
         std::optional<std::vector<int2>> d0 = block_matching(F1, F0, block_matching_block_size, block_matching_search_window_size);
         std::optional<std::vector<int2>> d2 = block_matching(F1, F2, block_matching_block_size, block_matching_search_window_size);

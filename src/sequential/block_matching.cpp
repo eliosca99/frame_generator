@@ -14,6 +14,8 @@
 
 namespace framegen::block_matching {
 
+using framegen::utils::int2;
+
 std::optional<std::vector<int2>> block_matching(const Frame& frame1, const Frame& frame2, int block_size, int search_window_size) {
     // check validità dei parametri
     if (frame1.width != frame2.width || frame1.height != frame2.height ||

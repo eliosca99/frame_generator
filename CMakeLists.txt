@@ -3,8 +3,10 @@ project(frame_generator LANGUAGES CXX)
 
 option(USE_CUDA "Enable CUDA support" ON)
 
+set(CMAKE_CUDA_ARCHITECTURES "native")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(C)
 
 find_package(PNG REQUIRED)
 
@@ -22,7 +24,7 @@ if(USE_CUDA)
         enable_language(CUDA)
         set(CMAKE_CUDA_STANDARD 17)
         set(CMAKE_CUDA_STANDARD_REQUIRED True)
-        list(APPEND SOURCES src/parallel/interpolation.cu)
+        list(APPEND SOURCES src/parallel/interpolation_cuda.cu)
     else()
         message(WARNING "CUDAToolkit not found; building without CUDA support.")
         set(USE_CUDA OFF)
