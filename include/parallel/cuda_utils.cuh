@@ -52,4 +52,4 @@ class GpuTimer {
         }
 };
 
-void warmup() { CUDA_CHECK(cudaFree(nullptr)); }
+inline void warmup() { CUDA_CHECK(cudaFree(nullptr)); }

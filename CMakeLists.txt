@@ -6,7 +6,6 @@ option(USE_CUDA "Enable CUDA support" ON)
 set(CMAKE_CUDA_ARCHITECTURES "native")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
-set(C)
 
 find_package(PNG REQUIRED)
 
@@ -31,7 +30,8 @@ if(USE_CUDA)
     endif()
 endif()
 
-add_executable(frame_generator ${SOURCES})
+add_executable(frame_generator ${SOURCES}
+    src/parallel/block_matching_cuda.cu)
 
 target_include_directories(frame_generator PRIVATE include)
 
