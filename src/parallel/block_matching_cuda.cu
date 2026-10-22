@@ -29,7 +29,23 @@ __global__ void BM_kernel(Pixel* d_F1, Pixel* d_F2, int2* d_out, int W, int H, i
     }
     __syncthreads();
 
-
+    // ogni thread calcola il SAD per uno o piu spostamenti (dx, dy) all'interno della finestra di ricerca
+    for(int i = threadIdx.x; i < (dxMax - dxMin + 1) * (dyMax - dyMin + 1); i += blockDim.x) {
+        int dx = dxMin + (i % (dxMax - dxMin + 1));
+        int dy = dyMin + (i / (dxMax - dxMin + 1));
+        unsigned long long sad = 0;
+        unsigned long long local_best_sad = LLONG_MAX;
+        for(int p = 0; p < block_w * block_h; p++) {
+            int r = p / block_w;
+            int c = p % block_w;
+            Pixel p1 = tile[p];
+            Pixel p2 = d_F2[(x0 + c + dx) + ((y0 + r + dy) * W)];
+            sad += std::abs(p1.r - p2.r) + std::abs(p1.g - p2.g) + std::abs(p1.b - p2.b);
+        }
+        if(sad < local_best_sad) local_best_sad = sad;
+    }
+    __syncthreads();
+    
 
 }// BM_kernel
 
