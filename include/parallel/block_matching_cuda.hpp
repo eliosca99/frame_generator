@@ -7,7 +7,7 @@
 #include "../utils/utils.hpp"
 #include "../parallel/cuda_utils.cuh"
 
-namespace framegen::block_matching_cuda {
+namespace framegen::block_matching {
 
     using framegen::utils::int2;
     std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame2, int block_size, int search_window_size, int cuda_block_size = 256);

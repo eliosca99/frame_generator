@@ -1,5 +1,6 @@
 #include "../../include/parallel/block_matching_cuda.hpp"
 #include <iostream>
+#include <climits>
 
 namespace framegen::block_matching {
 
@@ -13,13 +14,12 @@ __global__ void BM_kernel(Pixel* d_F1, Pixel* d_F2, int2* d_out, int W, int H, i
     int y0 = grid_r * block_size;
     int block_w = min(block_size, W - x0);
     int block_h = min(block_size, H - y0);
-    int dxMin = std::max(-search_window_size, -block_size * grid_c);
-    int dxMax = std::min(search_window_size, W - (grid_c * block_size + block_w));
-    int dyMin = std::max(-search_window_size, -block_size * grid_r);
-    int dyMax = std::min(search_window_size, H - (grid_r * block_size + block_h));
+    int dxMin = max(-search_window_size, -block_size * grid_c);
+    int dxMax = min(search_window_size, W - (grid_c * block_size + block_w));
+    int dyMin = max(-search_window_size, -block_size * grid_r);
+    int dyMax = min(search_window_size, H - (grid_r * block_size + block_h));
 
-    if(threadIdx.x == 0) best_sad = LLONG_MAX;
-    __syncthreads();
+    if(threadIdx.x == 0) best_sad = ULLONG_MAX;
 
     // popolo la shared memory, che per ogni blocco cuda conterrà il blocco corrispondente dell'immagine
     for(int i = threadIdx.x; i < block_w * block_h; i += blockDim.x) {
@@ -30,22 +30,45 @@ __global__ void BM_kernel(Pixel* d_F1, Pixel* d_F2, int2* d_out, int W, int H, i
     __syncthreads();
 
     // ogni thread calcola il SAD per uno o piu spostamenti (dx, dy) all'interno della finestra di ricerca
-    for(int i = threadIdx.x; i < (dxMax - dxMin + 1) * (dyMax - dyMin + 1); i += blockDim.x) {
-        int dx = dxMin + (i % (dxMax - dxMin + 1));
-        int dy = dyMin + (i / (dxMax - dxMin + 1));
-        unsigned long long sad = 0;
-        unsigned long long local_best_sad = LLONG_MAX;
-        for(int p = 0; p < block_w * block_h; p++) {
-            int r = p / block_w;
-            int c = p % block_w;
-            Pixel p1 = tile[p];
-            Pixel p2 = d_F2[(x0 + c + dx) + ((y0 + r + dy) * W)];
-            sad += std::abs(p1.r - p2.r) + std::abs(p1.g - p2.g) + std::abs(p1.b - p2.b);
+    unsigned long long local_best_sad = ULLONG_MAX;
+    int nx = dxMax - dxMin + 1;
+    int total = nx * (dyMax - dyMin + 1);
+    for (int k = threadIdx.x; k < total; k += blockDim.x) {
+        const int dx = dxMin + k % nx;
+        const int dy = dyMin + k / nx;
+
+        unsigned int sad = 0;
+        for (int i = 0; i < block_h; i++) {
+            const Pixel* rowA = tile + i * block_w;
+            const Pixel* rowB = d_F2 + (y0 + dy + i) * W + (x0 + dx);
+            for (int j = 0; j < block_w; j++) {
+                sad += abs(rowA[j].r - rowB[j].r)
+                     + abs(rowA[j].g - rowB[j].g)
+                     + abs(rowA[j].b - rowB[j].b);
+            }
         }
-        if(sad < local_best_sad) local_best_sad = sad;
+
+        const unsigned int priority = (dx == 0 && dy == 0) ? 0u : (unsigned int)(k + 1);
+        const unsigned long long key = ((unsigned long long)sad << 32) | priority;
+        if (key < local_best_sad) local_best_sad = key;
     }
+
+    atomicMin(&best_sad, local_best_sad);
     __syncthreads();
-    
+
+    if (threadIdx.x == 0) {
+        const unsigned int priority = (unsigned int)(best_sad & 0xFFFFFFFFull);
+        int bdx = 0, bdy = 0;
+        if (priority != 0) {
+            const int k = (int)priority - 1;
+            bdx = dxMin + k % nx;
+            bdy = dyMin + k / nx;
+        }
+        int2 v;
+        v.x = bdx;
+        v.y = bdy;
+        d_out[grid_r * gridDim.x + grid_c] = v;
+    }
 
 }// BM_kernel
 
@@ -55,7 +78,7 @@ std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame
         frame1.data.size() != (size_t)frame1.width * frame1.height ||
         frame2.data.size() != frame1.data.size() ||
         block_size <= 0 || search_window_size < 0 ||
-        block_size > std::min(frame1.width, frame1.height)) {
+        block_size > min(frame1.width, frame1.height)) {
         std::cerr << "Dati in input non validi!" << std::endl;
         return std::nullopt;
     }
@@ -64,8 +87,8 @@ std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame
     int grid_h = (frame1.height + block_size - 1) / block_size;
     int n_pixel = frame1.width * frame1.height;
 
-    dim3 cuda_grid = (grid_w, grid_h);
-    int sm_bytes = cuda_block_size * cuda_block_size * sizeof(Pixel);
+    dim3 cuda_grid = dim3(grid_w, grid_h);
+    int sm_bytes = block_size * block_size * sizeof(Pixel);
 
     DeviceBuffer<Pixel> d_F1(n_pixel);
     DeviceBuffer<Pixel> d_F2(n_pixel);
@@ -80,6 +103,4 @@ std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame
     return out;
 
 }// BM_cuda
-
-
 }// namespace
