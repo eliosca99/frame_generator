@@ -4,7 +4,7 @@
 
 namespace framegen::block_matching {
 
-__global__ void BM_kernel(Pixel* d_F1, Pixel* d_F2, int2* d_out, int W, int H, int block_size, int search_window_size, int cuda_block_size) {
+__global__ void BM_kernel(const Pixel* d_F1, const Pixel* d_F2, int2* d_out, int W, int H, int block_size, int search_window_size) {
     extern __shared__ Pixel tile[];
     __shared__ unsigned long long best_sad;
     
@@ -96,11 +96,26 @@ std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame
     d_F1.upload(frame1.data.data());
     d_F2.upload(frame2.data.data());
 
-    BM_kernel<<<cuda_grid, cuda_block_size, sm_bytes>>>(d_F1.get(), d_F2.get(), d_out.get(), frame1.width, frame1.height, block_size, search_window_size, cuda_block_size);
+    BM_kernel<<<cuda_grid, cuda_block_size, sm_bytes>>>(d_F1.get(), d_F2.get(), d_out.get(), frame1.width, frame1.height, block_size, search_window_size);
+
+    CUDA_CHECK(cudaGetLastError());
 
     std::vector<int2> out;
     d_out.download(out.data());
     return out;
 
 }// BM_cuda
+
+void BM_cuda_device(const Pixel* d_A, const Pixel* d_B, int2* d_out, int width, int height, int block_size, int search_window_size, int cuda_block_size) {
+    int grid_w = (width + block_size - 1) / block_size;
+    int grid_h = (height + block_size - 1) / block_size;
+
+    dim3 cuda_grid = dim3(grid_w, grid_h);
+    int sm_bytes = block_size * block_size * sizeof(Pixel);
+
+    BM_kernel<<<cuda_grid, cuda_block_size, sm_bytes>>>(d_A, d_B, d_out, width, height, block_size, search_window_size);
+
+    CUDA_CHECK(cudaGetLastError());
+}
+
 }// namespace

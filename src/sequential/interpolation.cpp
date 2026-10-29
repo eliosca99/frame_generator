@@ -1,5 +1,6 @@
 #include "../include/sequential/interpolation.hpp"
 #include "../include/utils/utils.hpp"
+#include "../include/utils/bicubic_math.hpp"
 #include "../include/sequential/block_matching.hpp"
 #include <iostream>
 #include <stdint.h>
@@ -125,9 +126,8 @@ namespace framegen::interpolation {
             // i pesi saranno 3 come le matrici di movimento, ovviamente perche il movimento da F1 a F1 è nullo
             // i pesi temporali sono calcolati solo in base a t, quindi sono comuni a tutti i blocchi.
             // Indicano quanto peso dare allo spostamento da F1 verso un altro frame.
-            float w0 = (pow(-t, 3) + (2 * pow(t, 2)) - t) / 2;
-            float w2 = ((-3 * pow(t, 3)) + (4 * pow(t, 2)) + t) / 2;
-            float w3 = (pow(t, 3) - pow(t, 2)) / 2;
+            float w0, w2, w3;
+            framegen::utils::temporalWeights(t, w0, w2, w3);
 
             Frame out;
             out.width = F1.width;
@@ -164,10 +164,10 @@ namespace framegen::interpolation {
                     int ixF1, iyF1, ixF2, iyF2;
                     float wxF1[4], wyF1[4], wxF2[4], wyF2[4];
 
-                    spatialWeights(     -Dx, ixF1, wxF1);
-                    spatialWeights(     -Dy, iyF1, wyF1);
-                    spatialWeights(d2_b.x - Dx, ixF2, wxF2);
-                    spatialWeights(d2_b.y - Dy, iyF2, wyF2);
+                    framegen::utils::spatialWeights(     -Dx, ixF1, wxF1);
+                    framegen::utils::spatialWeights(     -Dy, iyF1, wyF1);
+                    framegen::utils::spatialWeights(d2_b.x - Dx, ixF2, wxF2);
+                    framegen::utils::spatialWeights(d2_b.y - Dy, iyF2, wyF2);
 
                     // calcolati tutti i parametri relativi al blocco, ciclo sui pixel del blocco
                     int xStart = bx * block_matching_block_size;
@@ -176,8 +176,8 @@ namespace framegen::interpolation {
                     int yEnd = std::min(yStart + block_matching_block_size, F1.height);
                     for (int y = yStart; y < yEnd; y++) {
                         for (int x = xStart; x < xEnd; x++) {
-                            Color c1 = sample(F1.data.data(), F1.width, F1.height, x + ixF1, y + iyF1, wxF1, wyF1);
-                            Color c2 = sample(F2.data.data(), F2.width, F2.height, x + ixF2, y + iyF2, wxF2, wyF2);
+                            framegen::utils::Color c1 = framegen::utils::sample(F1.data.data(), F1.width, F1.height, x + ixF1, y + iyF1, wxF1, wyF1);
+                            framegen::utils::Color c2 = framegen::utils::sample(F2.data.data(), F2.width, F2.height, x + ixF2, y + iyF2, wxF2, wyF2);
                             // campionati i due pixel, eseguo il blending dei colori
                             float r = ((1.f - t) * c1.r) + (t * c2.r);
                             float g = ((1.f - t) * c1.g) + (t * c2.g);
@@ -196,45 +196,4 @@ namespace framegen::interpolation {
             }// for by
         }// for t in times
     }// bicubic_sequential
-
-    inline void spatialWeights(float off, int& i, float w[4]) {
-        // funzione che calcola i pesi spaziali
-        i = (int)floorf(off);
-        float f  = off - i;
-        float f2 = f * f;
-        float f3 = f2 * f;
-        w[0] = 0.5f * (-f3 + 2.f*f2 - f);
-        w[1] = 0.5f * ( 3.f*f3 - 5.f*f2 + 2.f);
-        w[2] = 0.5f * (-3.f*f3 + 4.f*f2 + f);
-        w[3] = 0.5f * ( f3 - f2);
-    }// spatialWeights
-
-    inline int clampi(int v, int lo, int hi) {
-        // funzione che esegue il clamping di v (indice del pixel nel blocco)
-        return v < lo ? lo : (v > hi ? hi : v);
-    }
-
-    inline Color sample(const Pixel* F, int W, int H, int X, int Y, const float wx[4], const float wy[4]) {
-        Color res = {0.f, 0.f, 0.f, 0.f};
-        for (int j = 0; j < 4; j++) {
-            int yy = clampi(Y - 1 + j, 0, H - 1);
-            Color rowColor = {0.f, 0.f, 0.f, 0.f};
-            // con questo for, applico i pesi ai 4 pixel della riga yy
-            for (int i = 0; i < 4; i++) {
-                int xx = clampi(X - 1 + i, 0, W - 1);
-                Pixel p = F[yy * W + xx];
-                rowColor.r += wx[i] * p.r;
-                rowColor.g += wx[i] * p.g;
-                rowColor.b += wx[i] * p.b;
-                rowColor.a += wx[i] * p.a;
-            }
-            // finita la passata sulla riga, applico i pesi in yy; è una somma, quindi la faccio per ogni yy
-            // e non tutta alla fine
-            res.r += wy[j] * rowColor.r;
-            res.g += wy[j] * rowColor.g;
-            res.b += wy[j] * rowColor.b;
-            res.a += wy[j] * rowColor.a;
-        }
-        return res;
-    }
 }// namespace framegen::interpolation

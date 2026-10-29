@@ -38,7 +38,8 @@ if(USE_CUDA)
 endif()
 
 add_executable(frame_generator ${SOURCES}
-    src/parallel/block_matching_cuda.cu)
+    src/parallel/block_matching_cuda.cu
+    include/utils/bicubic_math.hpp)
 
 target_include_directories(frame_generator PRIVATE include)
 
