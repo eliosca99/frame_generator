@@ -153,10 +153,10 @@ namespace framegen::interpolation {
                         - wFx0[4], wFy0[4]	Pesi cubici spaziali (lungo x e lungo y) per campionare F1, calcolati da fx0, fy0
                         - wFx1[4], wFy1[4]	Pesi cubici spaziali per campionare F2, calcolati da fx1, fy1
                     */
-                    int b = by * grid_w + bx;
-                    int2 d0_b = d0.value().at(b);
-                    int2 d2_b = d2.value().at(b);
-                    int2 d3_b = d3.value().at(b);
+                    int block = by * grid_w + bx;
+                    int2 d0_b = d0.value().at(block);
+                    int2 d2_b = d2.value().at(block);
+                    int2 d3_b = d3.value().at(block);
 
                     float Dx = w0*d0_b.x + w2*d2_b.x + w3*d3_b.x;
                     float Dy = w0*d0_b.y + w2*d2_b.y + w3*d3_b.y;

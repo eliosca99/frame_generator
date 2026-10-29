@@ -25,12 +25,13 @@ __global__ void lerp_kernel(const Pixel* d_F1, const Pixel* d_F2, Pixel* d_out, 
     }
 }// lerp_kernel
 
-__global__ void bicubic_kernel(const Pixel* d_F1, const Pixel* d_F2, int2* d_d0, int2* d_d2, int2* d_d3, Pixel* d_out, int t, float w0, float w2, float w3, int W, int H, int block_matching_block_size, int grid_w) {
+__global__ void bicubic_kernel(const Pixel* d_F1, const Pixel* d_F2, int2* d_d0, int2* d_d2, int2* d_d3, Pixel* d_out, float t, float w0, float w2, float w3, int W, int H, int block_matching_block_size, int grid_w) {
     // un thread per pixel di output.
     // ricavo prima il blocco di matching in cui il thread si trova
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
-    int block = ((y / block_matching_block_size) * grid_w) * (x / block_matching_block_size);
+    if(x >= W || y >= H) return;
+    int block = ((y / block_matching_block_size) * grid_w) + (x / block_matching_block_size);
 
     // calcolo D, che indica lo spostamento del blocco b da F1 a F2, usando i pesi di Catmull-Rom
     float Dx = w0 * d_d0[block].x + w2 * d_d2[block].x + w3 * d_d3[block].x;
@@ -87,7 +88,7 @@ void lerp_cuda(const FrameSequence& input, int nFrames, FrameSequence& output, i
         return;
     }
 
-    if(cudaBlockSize <= 0 || cudaBlockSize > 1024) {
+    if(cudaBlockSize < 32 || cudaBlockSize > 1024 || cudaBlockSize % 32 != 0) {
         std::cerr << "cudaBlockSize non valido!" << std::endl;
         return;
     }
@@ -114,6 +115,7 @@ void lerp_cuda(const FrameSequence& input, int nFrames, FrameSequence& output, i
         uint16_t T_inv = 256 - T;
 
         lerp_kernel<<<gridSize, cudaBlockSize>>>(d_F1.get(), d_F2.get(), d_out.get(), n, T, T_inv);
+        CUDA_CHECK(cudaGetLastError());
 
         d_out.download(out.data.data());
         output.push_back(out);
@@ -122,7 +124,43 @@ void lerp_cuda(const FrameSequence& input, int nFrames, FrameSequence& output, i
 
 void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_block_size, int block_matching_search_window_size, FrameSequence& output, int cuda_block_x, int cuda_block_y) {
     
-    int W = input.at(0).width; int H = input.at(0).height;
+    if (input.size() != 4) {
+        std::cerr << "Numero di Frames in input diverso da 4!" << std::endl;
+        return;
+    }
+    if (nFrames < 1) {
+        std::cerr << "Numero di Frames intermedi richiesti minore di 1!" << std::endl;
+        return;
+    }
+
+    const int W = input[0].width;
+    const int H = input[0].height;
+    if (W <= 0 || H <= 0) {
+        std::cerr << "Frames in input con dimensioni non valide!" << std::endl;
+        return;
+    }
+    for (const Frame& f : input) {
+        if (f.width != W || f.height != H) {
+            std::cerr << "Frames in input di dimensione diversa!" << std::endl;
+            return;
+        }
+        if (f.data.size() != (size_t)W * H) {
+            std::cerr << "Frames in input con dati non validi!" << std::endl;
+            return;
+        }
+    }
+
+    if (!framegen::block_matching::bm_params_valid(W, H, block_matching_block_size,
+            block_matching_search_window_size, cuda_block_x * cuda_block_y)) {
+        return;   // l'helper ha già stampato il motivo
+    }
+
+    int deviceCount = 0;
+    if (cudaGetDeviceCount(&deviceCount) != cudaSuccess || deviceCount == 0) {
+        std::cerr << "Nessun dispositivo CUDA disponibile!" << std::endl;
+        return;
+    }
+    
     int n_pixels = W * H;
     int grid_w = (W + block_matching_block_size - 1) / block_matching_block_size;
     int grid_h = (H + block_matching_block_size - 1) / block_matching_block_size;
@@ -155,7 +193,7 @@ void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_bl
 
     // calcolo ora sull'host i pesi di Catmull-Rom per ogni valore di t
     auto times = framegen::utils::make_times(nFrames);
-    for(int t : times) {
+    for(float t : times) {
         // calcolo i pesi temporali, che dipendono solo dal tempo t
         float w0, w2, w3;
         framegen::utils::temporalWeights(t, w0, w2, w3);

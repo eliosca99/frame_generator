@@ -1,8 +1,34 @@
 #include "../../include/parallel/block_matching_cuda.hpp"
 #include <iostream>
 #include <climits>
+#include <stdexcept>
 
 namespace framegen::block_matching {
+
+bool bm_params_valid(int W, int H, int block_size, int search_window_size, int cuda_block_size) {
+    if (W <= 0 || H <= 0) {
+        std::cerr << "Dimensioni del frame non valide!" << std::endl;
+        return false;
+    }
+    if (block_size <= 0 || block_size > std::min(W, H)) {
+        std::cerr << "block_size non valido (deve essere tra 1 e min(W,H))!" << std::endl;
+        return false;
+    }
+    if (search_window_size < 0) {
+        std::cerr << "search_window_size negativo!" << std::endl;
+        return false;
+    }
+    // la tile in shared memory deve stare nei 48 KB di default
+    if ((size_t)block_size * block_size * sizeof(Pixel) > 48 * 1024) {
+        std::cerr << "block_size troppo grande per la shared memory (max 110)!" << std::endl;
+        return false;
+    }
+    if (cuda_block_size < 32 || cuda_block_size > 1024 || cuda_block_size % 32 != 0) {
+        std::cerr << "cuda_block_size non valido (multiplo di 32, tra 32 e 1024)!" << std::endl;
+        return false;
+    }
+    return true;
+}// bm_params_valid
 
 __global__ void BM_kernel(const Pixel* d_F1, const Pixel* d_F2, int2* d_out, int W, int H, int block_size, int search_window_size) {
     extern __shared__ Pixel tile[];
@@ -77,8 +103,7 @@ std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame
     if (frame1.width != frame2.width || frame1.height != frame2.height ||
         frame1.data.size() != (size_t)frame1.width * frame1.height ||
         frame2.data.size() != frame1.data.size() ||
-        block_size <= 0 || search_window_size < 0 ||
-        block_size > min(frame1.width, frame1.height)) {
+        !bm_params_valid(frame1.width, frame1.height, block_size, search_window_size, cuda_block_size)) {
         std::cerr << "Dati in input non validi!" << std::endl;
         return std::nullopt;
     }
@@ -100,13 +125,16 @@ std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame
 
     CUDA_CHECK(cudaGetLastError());
 
-    std::vector<int2> out;
+    std::vector<int2> out(grid_w * grid_h);
     d_out.download(out.data());
     return out;
 
 }// BM_cuda
 
 void BM_cuda_device(const Pixel* d_A, const Pixel* d_B, int2* d_out, int width, int height, int block_size, int search_window_size, int cuda_block_size) {
+    if (!bm_params_valid(width, height, block_size, search_window_size, cuda_block_size))
+        throw std::invalid_argument("Parametri del block matching non validi");
+
     int grid_w = (width + block_size - 1) / block_size;
     int grid_h = (height + block_size - 1) / block_size;
 
