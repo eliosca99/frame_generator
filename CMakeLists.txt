@@ -30,16 +30,14 @@ if(USE_CUDA)
         enable_language(CUDA)
         set(CMAKE_CUDA_STANDARD 17)
         set(CMAKE_CUDA_STANDARD_REQUIRED True)
-        list(APPEND SOURCES src/parallel/interpolation_cuda.cu)
+        list(APPEND SOURCES src/parallel/interpolation_cuda.cu src/parallel/block_matching_cuda.cu)
     else()
         message(WARNING "CUDAToolkit not found; building without CUDA support.")
         set(USE_CUDA OFF)
     endif()
 endif()
 
-add_executable(frame_generator ${SOURCES}
-    src/parallel/block_matching_cuda.cu
-    include/utils/bicubic_math.hpp)
+add_executable(frame_generator ${SOURCES})
 
 target_include_directories(frame_generator PRIVATE include)
 
