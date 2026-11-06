@@ -3,13 +3,13 @@
 #include "../../include/utils/bicubic_math.hpp"
 #include "../../include/frame.hpp"
 #include "../../include/parallel/cuda_utils.cuh"
-#include "../../include/parallel/block_matching_cuda.hpp"
 
 #include <iostream>
 
 namespace framegen::interpolation {
 using framegen::utils::int2;
 
+// --- KERNELS ---
 __global__ void lerp_kernel(const Pixel* d_F1, const Pixel* d_F2, Pixel* d_out, int n, uint16_t T, uint16_t T_inv) {
     int threadId = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -63,6 +63,9 @@ __global__ void bicubic_kernel(const Pixel* d_F1, const Pixel* d_F2, int2* d_d0,
 
 }// bicubic_kernel
 
+
+
+// --- ALGORITHMS ---
 void lerp_cuda(const FrameSequence& input, int nFrames, FrameSequence& output, int cudaBlockSize) {
     // implementazione parallela dell'interpolazione con algoritmo lerp. Con il parametro nFrames, si indicano
     // quanti frame intermedi generare e verranno distribuiti in modo uniforme tra 0.0 e 1.0.
@@ -122,7 +125,7 @@ void lerp_cuda(const FrameSequence& input, int nFrames, FrameSequence& output, i
     }// for times
 }// lerp_cuda
 
-void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_block_size, int block_matching_search_window_size, FrameSequence& output, int cuda_block_x, int cuda_block_y) {
+void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_block_size, int block_matching_search_window_size, FrameSequence& output, framegen::block_matching::BMVariant variant, int cuda_block_x, int cuda_block_y) {
     
     if (input.size() != 4) {
         std::cerr << "Numero di Frames in input diverso da 4!" << std::endl;
@@ -182,9 +185,9 @@ void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_bl
     d_F3.upload(input.at(3).data.data());
 
     // invoco il block_matching per calcolare i vettori spostamento di F1 verso F0, F2, F3.
-    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F0.get(), d_d0.get(), W, H, block_matching_block_size, block_matching_search_window_size, cuda_block_x * cuda_block_y);
-    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F2.get(), d_d2.get(), W, H, block_matching_block_size, block_matching_search_window_size, cuda_block_x * cuda_block_y);
-    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F3.get(), d_d3.get(), W, H, block_matching_block_size, block_matching_search_window_size, cuda_block_x * cuda_block_y);
+    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F0.get(), d_d0.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
+    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F2.get(), d_d2.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
+    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F3.get(), d_d3.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
     
     int cuda_grid_x = (W + cuda_block_x - 1) / cuda_block_x;
     int cuda_grid_y = (H + cuda_block_y - 1) / cuda_block_y;

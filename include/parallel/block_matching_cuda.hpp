@@ -9,10 +9,12 @@
 
 namespace framegen::block_matching {
 
+    enum class BMVariant {GlobalOnly, SharedF1, SharedF1F2, WarpPerCandidate};
+
     using framegen::utils::int2;
     bool bm_params_valid(int W, int H, int block_size, int search_window_size, int cuda_block_size);
-    std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame2, int block_size, int search_window_size, int cuda_block_size = 256);
-    void BM_cuda_device(const Pixel* d_A, const Pixel* d_B, int2* d_out, int width, int height, int block_size, int search_window_size, int cuda_block_size = 256);
+    std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame2, int block_size, int search_window_size, BMVariant variant, int cuda_block_size = 256);
+    void BM_cuda_device(const Pixel* d_A, const Pixel* d_B, int2* d_out, int width, int height, int block_size, int search_window_size, BMVariant variant, int cuda_block_size = 256);
 } //namespace
 
 #endif
