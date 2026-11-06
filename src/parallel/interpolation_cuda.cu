@@ -8,6 +8,55 @@
 
 namespace framegen::interpolation {
 using framegen::utils::int2;
+using framegen::utils::Color;
+using framegen::utils::spatialWeights;
+using framegen::utils::sample;
+using framegen::utils::clampi;
+
+
+
+// --- UTILS ---
+// parametri di un blocco di matching per un dato t (80 byte)
+struct alignas(16) BlockParams {
+    int ix1, iy1, ix2, iy2;       // parte intera degli offset di lettura in F1 e F2
+    float4 wx1, wy1, wx2, wy2;    // pesi cubici spaziali
+};
+
+__device__ inline BlockParams make_params(int2 m0, int2 m2, int2 m3,
+                                          float w0, float w2, float w3) {
+    const float Dx = w0 * m0.x + w2 * m2.x + w3 * m3.x;
+    const float Dy = w0 * m0.y + w2 * m2.y + w3 * m3.y;
+    BlockParams P;
+    float wx1[4], wy1[4], wx2[4], wy2[4];
+    spatialWeights(-Dx,        P.ix1, wx1);
+    spatialWeights(-Dy,        P.iy1, wy1);
+    spatialWeights(m2.x - Dx,  P.ix2, wx2);
+    spatialWeights(m2.y - Dy,  P.iy2, wy2);
+    P.wx1 = make_float4(wx1[0], wx1[1], wx1[2], wx1[3]);
+    P.wy1 = make_float4(wy1[0], wy1[1], wy1[2], wy1[3]);
+    P.wx2 = make_float4(wx2[0], wx2[1], wx2[2], wx2[3]);
+    P.wy2 = make_float4(wy2[0], wy2[1], wy2[2], wy2[3]);
+    return P;
+}
+__device__ inline void unpack(const float4& v, float w[4]) {
+    w[0] = v.x; w[1] = v.y; w[2] = v.z; w[3] = v.w;
+}
+
+__device__ inline Pixel blend(const Color& c1, const Color& c2, float t) {
+    Pixel o;
+    o.r = (uint8_t)(fminf(fmaxf((1.f - t) * c1.r + t * c2.r, 0.f), 255.f) + 0.5f);
+    o.g = (uint8_t)(fminf(fmaxf((1.f - t) * c1.g + t * c2.g, 0.f), 255.f) + 0.5f);
+    o.b = (uint8_t)(fminf(fmaxf((1.f - t) * c1.b + t * c2.b, 0.f), 255.f) + 0.5f);
+    o.a = (uint8_t)(fminf(fmaxf((1.f - t) * c1.a + t * c2.a, 0.f), 255.f) + 0.5f);
+    return o;
+}
+
+bool bicubic_variant_supported(BicubicVariant v, int bs) {
+    if (v != BicubicVariant::SharedTile) return true;
+    const size_t bytes = 2 * (size_t)(bs + 3) * (bs + 3) * sizeof(Pixel) + sizeof(BlockParams);
+    return bytes <= 48 * 1024;
+}
+
 
 // --- KERNELS ---
 __global__ void lerp_kernel(const Pixel* d_F1, const Pixel* d_F2, Pixel* d_out, int n, uint16_t T, uint16_t T_inv) {
@@ -62,6 +111,78 @@ __global__ void bicubic_kernel(const Pixel* d_F1, const Pixel* d_F2, int2* d_d0,
     d_out[y * W + x] = o;
 
 }// bicubic_kernel
+
+// un thread per blocco di matching
+__global__ void bicubic_params_kernel(const int2* d_d0, const int2* d_d2, const int2* d_d3,
+                                      BlockParams* d_params, int n_blocks,
+                                      float w0, float w2, float w3) {
+    const int b = blockIdx.x * blockDim.x + threadIdx.x;
+    if (b >= n_blocks) return;
+    d_params[b] = make_params(d_d0[b], d_d2[b], d_d3[b], w0, w2, w3);
+}// bicubic_params_kernel
+
+// un thread per pixel, legge i parametri già pronti
+__global__ void bicubic_kernel_pre(const Pixel* d_F1, const Pixel* d_F2,
+                                   const BlockParams* d_params, Pixel* d_out,
+                                   float t, int W, int H, int bs, int grid_w) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= W || y >= H) return;
+
+    const int b = (y / bs) * grid_w + (x / bs);
+    const BlockParams P = d_params[b];     // 80 byte, letture a 128 bit
+
+    float wx1[4], wy1[4], wx2[4], wy2[4];
+    unpack(P.wx1, wx1); unpack(P.wy1, wy1);
+    unpack(P.wx2, wx2); unpack(P.wy2, wy2);
+
+    const Color c1 = sample(d_F1, W, H, x + P.ix1, y + P.iy1, wx1, wy1);
+    const Color c2 = sample(d_F2, W, H, x + P.ix2, y + P.iy2, wx2, wy2);
+    d_out[y * W + x] = blend(c1, c2, t);
+}// bicubic_kernel_pre
+
+__global__ void bicubic_kernel_tile(const Pixel* d_F1, const Pixel* d_F2,
+                                    const int2* d_d0, const int2* d_d2, const int2* d_d3,
+                                    Pixel* d_out, float t, float w0, float w2, float w3,
+                                    int W, int H, int bs) {
+    extern __shared__ Pixel smem[];
+    __shared__ BlockParams P;
+
+    const int grid_c = blockIdx.x, grid_r = blockIdx.y;
+    const int b  = grid_r * gridDim.x + grid_c;
+    const int x0 = grid_c * bs, y0 = grid_r * bs;
+    const int bw = min(bs, W - x0), bh = min(bs, H - y0);   // blocchi parziali sui bordi
+    const int tw = bw + 3, th = bh + 3;                      // finestra sorgente: +1 a sinistra/sopra, +2 a destra/sotto
+
+    // 1. parametri del blocco: li calcola un solo thread
+    if (threadIdx.x == 0) P = make_params(d_d0[b], d_d2[b], d_d3[b], w0, w2, w3);
+    __syncthreads();
+
+    // 2. caricamento cooperativo delle due finestre, con il clamp applicato qui
+    Pixel* tile1 = smem;
+    Pixel* tile2 = smem + tw * th;
+    const int sx1 = x0 + P.ix1 - 1, sy1 = y0 + P.iy1 - 1;
+    const int sx2 = x0 + P.ix2 - 1, sy2 = y0 + P.iy2 - 1;
+    for (int i = threadIdx.x; i < tw * th; i += blockDim.x) {
+        const int r = i / tw, c = i % tw;
+        tile1[i] = d_F1[clampi(sy1 + r, 0, H - 1) * W + clampi(sx1 + c, 0, W - 1)];
+        tile2[i] = d_F2[clampi(sy2 + r, 0, H - 1) * W + clampi(sx2 + c, 0, W - 1)];
+    }
+    __syncthreads();
+
+    float wx1[4], wy1[4], wx2[4], wy2[4];
+    unpack(P.wx1, wx1); unpack(P.wy1, wy1);
+    unpack(P.wx2, wx2); unpack(P.wy2, wy2);
+
+    // 3. ogni thread elabora uno o più pixel del blocco
+    for (int p = threadIdx.x; p < bw * bh; p += blockDim.x) {
+        const int lx = p % bw, ly = p / bw;
+        // coordinate locali: +1 perché sample() legge da X-1 a X+2
+        const Color c1 = sample(tile1, tw, th, lx + 1, ly + 1, wx1, wy1);
+        const Color c2 = sample(tile2, tw, th, lx + 1, ly + 1, wx2, wy2);
+        d_out[(y0 + ly) * W + (x0 + lx)] = blend(c1, c2, t);
+    }
+}// bicubic_kernel_tile
 
 
 
@@ -125,7 +246,7 @@ void lerp_cuda(const FrameSequence& input, int nFrames, FrameSequence& output, i
     }// for times
 }// lerp_cuda
 
-void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_block_size, int block_matching_search_window_size, FrameSequence& output, framegen::block_matching::BMVariant variant, int cuda_block_x, int cuda_block_y) {
+void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_block_size, int block_matching_search_window_size, FrameSequence& output, framegen::block_matching::BMVariant variant, int cuda_block_x, int cuda_block_y, BicubicVariant bicubic_variant) {
     
     if (input.size() != 4) {
         std::cerr << "Numero di Frames in input diverso da 4!" << std::endl;
@@ -156,6 +277,11 @@ void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_bl
     if (!framegen::block_matching::bm_params_valid(W, H, block_matching_block_size,
             block_matching_search_window_size, cuda_block_x * cuda_block_y)) {
         return;   // l'helper ha già stampato il motivo
+    }
+
+    if (!bicubic_variant_supported(bicubic_variant, block_matching_block_size)) {
+        std::cerr << "block_size troppo grande per la variante SharedTile (max 75)!" << std::endl;
+        return;
     }
 
     int deviceCount = 0;
@@ -194,20 +320,45 @@ void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_bl
     dim3 cuda_block(cuda_block_x, cuda_block_y);
     dim3 cuda_grid(cuda_grid_x, cuda_grid_y);
 
+    DeviceBuffer<BlockParams> d_params(bicubic_variant == BicubicVariant::Precomputed ? n_blocks : 1);
+    const int threads_1d = cuda_block_x * cuda_block_y;     // per SharedTile e per il BM
+    dim3 grid_bm(grid_w, grid_h);                           // un blocco CUDA per blocco di matching
+    const size_t tile_bytes = 2 * (size_t)(block_matching_block_size + 3) * (block_matching_block_size + 3) * sizeof(Pixel);
+    const int params_threads = 128;
+    const int params_grid = ceil_div(n_blocks, params_threads);
+
     // calcolo ora sull'host i pesi di Catmull-Rom per ogni valore di t
     auto times = framegen::utils::make_times(nFrames);
-    for(float t : times) {
-        // calcolo i pesi temporali, che dipendono solo dal tempo t
+    for (float t : times) {
         float w0, w2, w3;
         framegen::utils::temporalWeights(t, w0, w2, w3);
-        
-        bicubic_kernel<<<cuda_grid, cuda_block>>>(d_F1.get(), d_F2.get(), d_d0.get(), d_d2.get(), d_d3.get(), d_out.get(), t, w0, w2, w3, W, H, block_matching_block_size, grid_w);
+
+        switch (bicubic_variant) {
+            case BicubicVariant::Baseline:
+                bicubic_kernel<<<cuda_grid, cuda_block>>>(d_F1.get(), d_F2.get(), d_d0.get(), d_d2.get(), d_d3.get(),
+                                                        d_out.get(), t, w0, w2, w3, W, H,
+                                                        block_matching_block_size, grid_w);
+                break;
+            case BicubicVariant::Precomputed:
+                bicubic_params_kernel<<<params_grid, params_threads>>>(d_d0.get(), d_d2.get(), d_d3.get(),
+                                                                    d_params.get(), n_blocks, w0, w2, w3);
+                bicubic_kernel_pre<<<cuda_grid, cuda_block>>>(d_F1.get(), d_F2.get(), d_params.get(),
+                                                            d_out.get(), t, W, H,
+                                                            block_matching_block_size, grid_w);
+                break;
+            case BicubicVariant::SharedTile:
+                bicubic_kernel_tile<<<grid_bm, threads_1d, tile_bytes>>>(d_F1.get(), d_F2.get(),
+                                                                        d_d0.get(), d_d2.get(), d_d3.get(),
+                                                                        d_out.get(), t, w0, w2, w3, W, H,
+                                                                        block_matching_block_size);
+                break;
+        }
         CUDA_CHECK(cudaGetLastError());
+
         Frame out; out.width = W; out.height = H; out.data.resize(n_pixels);
         d_out.download(out.data.data());
         output.push_back(std::move(out));
     }// for times
-
 }// bicubic_cuda
 
 }// namespace
