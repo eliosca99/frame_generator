@@ -219,31 +219,36 @@ void lerp_cuda(const FrameSequence& input, int nFrames, FrameSequence& output, i
     
     size_t n = F1.height * F1.width;
     int gridSize = (n + cudaBlockSize - 1) / cudaBlockSize;
-    DeviceBuffer<Pixel> d_F1(n);
-    DeviceBuffer<Pixel> d_F2(n);
-    DeviceBuffer<Pixel> d_out(n);
-    d_F1.upload(F1.data.data());
-    d_F2.upload(F2.data.data());
-    d_out.upload(F1.data.data());
 
+    try {
+        DeviceBuffer<Pixel> d_F1(n);
+        DeviceBuffer<Pixel> d_F2(n);
+        DeviceBuffer<Pixel> d_out(n);
+        d_F1.upload(F1.data.data());
+        d_F2.upload(F2.data.data());
 
-    auto times = framegen::utils::make_times(nFrames);
-    for (float t : times) {
-        Frame out;
-        out.height = F1.height;
-        out.width = F1.width;
-        out.data.resize(static_cast<size_t>(n));
+        auto times = framegen::utils::make_times(nFrames);
+        for (float t : times) {
+            Frame out;
+            out.height = F1.height;
+            out.width = F1.width;
+            out.data.resize(static_cast<size_t>(n));
 
-        uint16_t T = (uint16_t)(t * 256 + 0.5);
-        if(T > 256) T = 256;
-        uint16_t T_inv = 256 - T;
+            uint16_t T = (uint16_t)(t * 256 + 0.5);
+            if(T > 256) T = 256;
+            uint16_t T_inv = 256 - T;
 
-        lerp_kernel<<<gridSize, cudaBlockSize>>>(d_F1.get(), d_F2.get(), d_out.get(), n, T, T_inv);
-        CUDA_CHECK(cudaGetLastError());
+            lerp_kernel<<<gridSize, cudaBlockSize>>>(d_F1.get(), d_F2.get(), d_out.get(), n, T, T_inv);
+            CUDA_CHECK(cudaGetLastError());
 
-        d_out.download(out.data.data());
-        output.push_back(out);
-    }// for times
+            d_out.download(out.data.data());
+            output.push_back(out);
+        }// for times
+    } catch (const std::exception& e) {
+        std::cerr << "LERP CUDA failed: " << e.what() << std::endl;
+        output.clear();
+        return;
+    }
 }// lerp_cuda
 
 void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_block_size, int block_matching_search_window_size, FrameSequence& output, framegen::block_matching::BMVariant variant, int cuda_block_x, int cuda_block_y, BicubicVariant bicubic_variant) {
@@ -279,6 +284,11 @@ void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_bl
         return;   // l'helper ha già stampato il motivo
     }
 
+    if (!framegen::block_matching::bm_variant_supported(variant, block_matching_block_size, block_matching_search_window_size)) {
+        std::cerr << "Variante non supportata per shared memory troppo grande" << std::endl;
+        return;
+    }
+
     if (!bicubic_variant_supported(bicubic_variant, block_matching_block_size)) {
         std::cerr << "block_size troppo grande per la variante SharedTile (max 75)!" << std::endl;
         return;
@@ -295,70 +305,76 @@ void bicubic_cuda(const FrameSequence& input, int nFrames, int block_matching_bl
     int grid_h = (H + block_matching_block_size - 1) / block_matching_block_size;
     int n_blocks = grid_w * grid_h;
 
-    // Alloco in global memory i 4 frames in input, il frame di output e i 3 vettori di movimento da calcolare con il block_matching
-    DeviceBuffer<Pixel> d_F0(n_pixels); 
-    DeviceBuffer<Pixel> d_F1(n_pixels);
-    DeviceBuffer<Pixel> d_F2(n_pixels);
-    DeviceBuffer<Pixel> d_F3(n_pixels);
-    DeviceBuffer<Pixel> d_out(n_pixels);
-    DeviceBuffer<int2> d_d0(n_blocks);
-    DeviceBuffer<int2> d_d2(n_blocks);
-    DeviceBuffer<int2> d_d3(n_blocks);
-    // Copio in global memory i frames
-    d_F0.upload(input.at(0).data.data());
-    d_F1.upload(input.at(1).data.data());
-    d_F2.upload(input.at(2).data.data());
-    d_F3.upload(input.at(3).data.data());
+    try {
+        // Alloco in global memory i 4 frames in input, il frame di output e i 3 vettori di movimento da calcolare con il block_matching
+        DeviceBuffer<Pixel> d_F0(n_pixels); 
+        DeviceBuffer<Pixel> d_F1(n_pixels);
+        DeviceBuffer<Pixel> d_F2(n_pixels);
+        DeviceBuffer<Pixel> d_F3(n_pixels);
+        DeviceBuffer<Pixel> d_out(n_pixels);
+        DeviceBuffer<int2> d_d0(n_blocks);
+        DeviceBuffer<int2> d_d2(n_blocks);
+        DeviceBuffer<int2> d_d3(n_blocks);
+        // Copio in global memory i frames
+        d_F0.upload(input.at(0).data.data());
+        d_F1.upload(input.at(1).data.data());
+        d_F2.upload(input.at(2).data.data());
+        d_F3.upload(input.at(3).data.data());
 
-    // invoco il block_matching per calcolare i vettori spostamento di F1 verso F0, F2, F3.
-    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F0.get(), d_d0.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
-    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F2.get(), d_d2.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
-    framegen::block_matching::BM_cuda_device(d_F1.get(), d_F3.get(), d_d3.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
-    
-    int cuda_grid_x = (W + cuda_block_x - 1) / cuda_block_x;
-    int cuda_grid_y = (H + cuda_block_y - 1) / cuda_block_y;
-    dim3 cuda_block(cuda_block_x, cuda_block_y);
-    dim3 cuda_grid(cuda_grid_x, cuda_grid_y);
+        // invoco il block_matching per calcolare i vettori spostamento di F1 verso F0, F2, F3.
+        framegen::block_matching::BM_cuda_device(d_F1.get(), d_F0.get(), d_d0.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
+        framegen::block_matching::BM_cuda_device(d_F1.get(), d_F2.get(), d_d2.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
+        framegen::block_matching::BM_cuda_device(d_F1.get(), d_F3.get(), d_d3.get(), W, H, block_matching_block_size, block_matching_search_window_size, variant, cuda_block_x * cuda_block_y);
+        
+        int cuda_grid_x = (W + cuda_block_x - 1) / cuda_block_x;
+        int cuda_grid_y = (H + cuda_block_y - 1) / cuda_block_y;
+        dim3 cuda_block(cuda_block_x, cuda_block_y);
+        dim3 cuda_grid(cuda_grid_x, cuda_grid_y);
 
-    DeviceBuffer<BlockParams> d_params(bicubic_variant == BicubicVariant::Precomputed ? n_blocks : 1);
-    const int threads_1d = cuda_block_x * cuda_block_y;     // per SharedTile e per il BM
-    dim3 grid_bm(grid_w, grid_h);                           // un blocco CUDA per blocco di matching
-    const size_t tile_bytes = 2 * (size_t)(block_matching_block_size + 3) * (block_matching_block_size + 3) * sizeof(Pixel);
-    const int params_threads = 128;
-    const int params_grid = ceil_div(n_blocks, params_threads);
+        DeviceBuffer<BlockParams> d_params(bicubic_variant == BicubicVariant::Precomputed ? n_blocks : 1);
+        const int threads_1d = cuda_block_x * cuda_block_y;     // per SharedTile e per il BM
+        dim3 grid_bm(grid_w, grid_h);                           // un blocco CUDA per blocco di matching
+        const size_t tile_bytes = 2 * (size_t)(block_matching_block_size + 3) * (block_matching_block_size + 3) * sizeof(Pixel);
+        const int params_threads = 128;
+        const int params_grid = ceil_div(n_blocks, params_threads);
 
-    // calcolo ora sull'host i pesi di Catmull-Rom per ogni valore di t
-    auto times = framegen::utils::make_times(nFrames);
-    for (float t : times) {
-        float w0, w2, w3;
-        framegen::utils::temporalWeights(t, w0, w2, w3);
+        // calcolo ora sull'host i pesi di Catmull-Rom per ogni valore di t
+        auto times = framegen::utils::make_times(nFrames);
+        for (float t : times) {
+            float w0, w2, w3;
+            framegen::utils::temporalWeights(t, w0, w2, w3);
 
-        switch (bicubic_variant) {
-            case BicubicVariant::Baseline:
-                bicubic_kernel<<<cuda_grid, cuda_block>>>(d_F1.get(), d_F2.get(), d_d0.get(), d_d2.get(), d_d3.get(),
-                                                        d_out.get(), t, w0, w2, w3, W, H,
-                                                        block_matching_block_size, grid_w);
-                break;
-            case BicubicVariant::Precomputed:
-                bicubic_params_kernel<<<params_grid, params_threads>>>(d_d0.get(), d_d2.get(), d_d3.get(),
-                                                                    d_params.get(), n_blocks, w0, w2, w3);
-                bicubic_kernel_pre<<<cuda_grid, cuda_block>>>(d_F1.get(), d_F2.get(), d_params.get(),
-                                                            d_out.get(), t, W, H,
+            switch (bicubic_variant) {
+                case BicubicVariant::Baseline:
+                    bicubic_kernel<<<cuda_grid, cuda_block>>>(d_F1.get(), d_F2.get(), d_d0.get(), d_d2.get(), d_d3.get(),
+                                                            d_out.get(), t, w0, w2, w3, W, H,
                                                             block_matching_block_size, grid_w);
-                break;
-            case BicubicVariant::SharedTile:
-                bicubic_kernel_tile<<<grid_bm, threads_1d, tile_bytes>>>(d_F1.get(), d_F2.get(),
-                                                                        d_d0.get(), d_d2.get(), d_d3.get(),
-                                                                        d_out.get(), t, w0, w2, w3, W, H,
-                                                                        block_matching_block_size);
-                break;
-        }
-        CUDA_CHECK(cudaGetLastError());
+                    break;
+                case BicubicVariant::Precomputed:
+                    bicubic_params_kernel<<<params_grid, params_threads>>>(d_d0.get(), d_d2.get(), d_d3.get(),
+                                                                        d_params.get(), n_blocks, w0, w2, w3);
+                    bicubic_kernel_pre<<<cuda_grid, cuda_block>>>(d_F1.get(), d_F2.get(), d_params.get(),
+                                                                d_out.get(), t, W, H,
+                                                                block_matching_block_size, grid_w);
+                    break;
+                case BicubicVariant::SharedTile:
+                    bicubic_kernel_tile<<<grid_bm, threads_1d, tile_bytes>>>(d_F1.get(), d_F2.get(),
+                                                                            d_d0.get(), d_d2.get(), d_d3.get(),
+                                                                            d_out.get(), t, w0, w2, w3, W, H,
+                                                                            block_matching_block_size);
+                    break;
+            }
+            CUDA_CHECK(cudaGetLastError());
 
-        Frame out; out.width = W; out.height = H; out.data.resize(n_pixels);
-        d_out.download(out.data.data());
-        output.push_back(std::move(out));
-    }// for times
+            Frame out; out.width = W; out.height = H; out.data.resize(n_pixels);
+            d_out.download(out.data.data());
+            output.push_back(std::move(out));
+        }// for times
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        output.clear();
+        return;
+    }
 }// bicubic_cuda
 
 }// namespace

@@ -89,6 +89,7 @@ __global__ void BM_kernel_global(const Pixel* d_F1, const Pixel* d_F2, int2* d_o
     int dyMax = min(search_window_size, H - (grid_r * block_size + block_h));
 
     if(threadIdx.x == 0) best_sad = ULLONG_MAX;
+    __syncthreads();
 
     // ogni thread calcola il SAD per uno o piu spostamenti (dx, dy) all'interno della finestra di ricerca
     unsigned long long local_best_sad = ULLONG_MAX;
@@ -307,8 +308,10 @@ std::optional<std::vector<int2>> BM_cuda(const Frame& frame1, const Frame& frame
 }// BM_cuda
 
 void BM_cuda_device(const Pixel* d_A, const Pixel* d_B, int2* d_out, int width, int height, int block_size, int search_window_size, BMVariant variant, int cuda_block_size) {
-    if (!bm_params_valid(width, height, block_size, search_window_size, cuda_block_size))
-    throw std::invalid_argument("Parametri del block matching non validi");
+    if(!bm_params_valid(width, height, block_size, search_window_size, cuda_block_size))
+        throw std::invalid_argument("Parametri del block matching non validi");
+    if(!bm_variant_supported(variant, block_size, search_window_size))
+        throw std::invalid_argument("Parametri del block matching non validi, shared memory supera 48KB");
 
     int grid_w = (width + block_size - 1) / block_size;
     int grid_h = (height + block_size - 1) / block_size;
@@ -327,7 +330,7 @@ void BM_cuda_device(const Pixel* d_A, const Pixel* d_B, int2* d_out, int width, 
             int dxMin = -search_window_size; // approssimazione per allocazione smem
             int dxMax = search_window_size;
             int rw = (dxMax - dxMin) + block_size;
-            int rh = (dxMax - dxMin) + block_size;
+            int rh = (dxMax - dxMin) + block_size; // usa sempre dx perche la window è simmetrica
             int sm_bytes = (block_size * block_size + rw * rh) * sizeof(Pixel);
             BM_kernel_shared_f1f2<<<cuda_grid, cuda_block_size, sm_bytes>>>(d_A, d_B, d_out, width, height, block_size, search_window_size);
             break;
@@ -343,7 +346,21 @@ void BM_cuda_device(const Pixel* d_A, const Pixel* d_B, int2* d_out, int width, 
 }
 
 
-
+// --- UTILS ---
+bool bm_variant_supported(BMVariant v, int bs, int sw) {
+    const size_t limit = 48 * 1024;
+    switch (v) {
+        case BMVariant::GlobalOnly: return true;
+        case BMVariant::SharedF1:
+        case BMVariant::WarpPerCandidate:
+            return (size_t)bs * bs * sizeof(Pixel) <= limit;
+        case BMVariant::SharedF1F2: {
+            const size_t rw = 2 * (size_t)sw + bs;
+            return ((size_t)bs * bs + rw * rw) * sizeof(Pixel) <= limit;
+        }
+    }
+    return false;
+}// bm_variant_supported
 
 bool bm_params_valid(int W, int H, int block_size, int search_window_size, int cuda_block_size) {
     if (W <= 0 || H <= 0) {

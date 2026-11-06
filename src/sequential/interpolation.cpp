@@ -185,10 +185,10 @@ namespace framegen::interpolation {
                             float a = ((1.f - t) * c1.a) + (t * c2.a);
                             
                             Pixel o;
-                            o.r = (uint8_t)(std::min(std::max(r, 0.f), 255.f) + 0.5);
-                            o.g = (uint8_t)(std::min(std::max(g, 0.f), 255.f) + 0.5);
-                            o.b = (uint8_t)(std::min(std::max(b, 0.f), 255.f) + 0.5);
-                            o.a = (uint8_t)(std::min(std::max(a, 0.f), 255.f) + 0.5);
+                            o.r = (uint8_t)(std::min(std::max(r, 0.f), 255.f) + 0.5f);
+                            o.g = (uint8_t)(std::min(std::max(g, 0.f), 255.f) + 0.5f);
+                            o.b = (uint8_t)(std::min(std::max(b, 0.f), 255.f) + 0.5f);
+                            o.a = (uint8_t)(std::min(std::max(a, 0.f), 255.f) + 0.5f);
                             output.back().data[y * F1.width + x] = o;
                         }
                     }
