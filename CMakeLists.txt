@@ -12,13 +12,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 find_package(PNG REQUIRED)
 
-set(SOURCES
-    src/main.cpp
+set(COMMON_SOURCES
     src/sequential/interpolation.cpp
     src/sequential/block_matching.cpp
     src/utils/png_utils.cpp
     src/utils/utils.cpp
 )
+
+set(SOURCES src/main.cpp ${COMMON_SOURCES})
 
 if(USE_CUDA)
     find_package(CUDAToolkit QUIET)
@@ -42,6 +43,13 @@ add_executable(frame_generator ${SOURCES})
 target_include_directories(frame_generator PRIVATE include)
 
 target_link_libraries(frame_generator PRIVATE PNG::PNG)
+
+add_executable(test_main src/test_main.cpp ${COMMON_SOURCES})
+
+target_include_directories(test_main PRIVATE include)
+
+target_link_libraries(test_main PRIVATE PNG::PNG)
+target_compile_definitions(test_main PRIVATE TEST_MAIN_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 if(USE_CUDA)
     target_link_libraries(frame_generator PRIVATE CUDA::cudart)

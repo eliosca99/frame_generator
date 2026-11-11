@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
     const Options opt = parse_args(argc, argv);
 
     // ---- Caricamento dei 4 frame ----
-    const std::array<const char*, 4> files = {"primo.png", "secondo.png", "terzo.png", "quarto.png"};
+    const std::array<const char*, 4> files = {"frame_0.png", "frame_1.png", "frame_2.png", "frame_3.png"};
     FrameSequence input;
     for (const char* f : files) {
         std::optional<Frame> fr = utils::load_png(opt.inputDir / f);

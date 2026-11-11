@@ -51,8 +51,15 @@ cd build
 # Configura il progetto tramite CMake
 cmake ..
 
-# Compila l'eseguibile
+# Compila gli eseguibili
 make
+```
+
+La build produce anche `test_main`, che esegue le prove definite in
+`src/test_main.cpp`:
+
+```bash
+./test_main
 ```
 
 ## 💻 Utilizzo
